@@ -28,7 +28,8 @@ class RetinaNet:
         self.batch_size = config['batch_size'] if config['mode'] == 'train' else 1
         self.anchors = [32, 64, 128, 256, 512]
         self.aspect_ratios = [1, 1/2, 2]
-        self.num_anchors = len(self.aspect_ratios)
+        self.anchor_size = [2**0, 2**(1/3), 2**(2/3)]
+        self.num_anchors = len(self.aspect_ratios) * len(self.anchor_size)
         self.nms_score_threshold = config['nms_score_threshold']
         self.nms_max_boxes = config['nms_max_boxes']
         self.nms_iou_threshold = config['nms_iou_threshold']
@@ -312,7 +313,8 @@ class RetinaNet:
 
         priors = []
         for r in self.aspect_ratios:
-            priors.append([size*(r**0.5), size/(r**0.5)])
+            for s in self.anchor_size:
+                priors.append([s*size*(r**0.5), s*size/(r**0.5)])
         priors = tf.convert_to_tensor(priors, tf.float32)
         priors = tf.reshape(priors, [1, 1, -1, 2])
 
