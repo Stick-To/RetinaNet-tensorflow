@@ -5,6 +5,7 @@ import tensorflow as tf
 import os
 import sys
 import numpy as np
+import math
 
 
 class RetinaNet:
@@ -15,9 +16,15 @@ class RetinaNet:
         assert config['data_format'] in ['channels_first', 'channels_last']
         self.config = config
         self.data_provider = data_provider
+
+        self.init_conv_kernel_size = 7
+        self.init_conv_strides = 2  # must be 2 for construct pyramid
+        self.init_pooling_pool_size = 3
+        self.init_pooling_strides = 2  # must be 2 for construct pyramid
+
         self.is_bottleneck = config['is_bottleneck']
         self.block_list = config['residual_block_list']
-        self.filters_list = [config['init_conv_filters'] * (2 ** i) for i in range(len(config['residual_block_list']))]
+        self.filters_list = [self.init_conv_kernel_size * (2 ** i) for i in range(len(config['residual_block_list']))]
         self.is_pretraining = config['is_pretraining']
         self.data_shape = config['data_shape']
         self.num_classes = config['num_classes'] + 1
@@ -26,6 +33,9 @@ class RetinaNet:
         self.data_format = config['data_format']
         self.mode = config['mode']
         self.batch_size = config['batch_size'] if config['mode'] == 'train' else 1
+        self.gamma = config['gamma']
+        self.alpha = config['alpha']
+
         self.anchors = [32, 64, 128, 256, 512]
         self.aspect_ratios = [1, 1/2, 2]
         self.anchor_size = [2**0, 2**(1/3), 2**(2/3)]
@@ -132,16 +142,16 @@ class RetinaNet:
             p6 = self._get_pyramid(p5, 256)
             p7 = self._get_pyramid(p6, 256)
         with tf.variable_scope('regressor'):
-            pred3c = self._bn_activation_conv(p3, self.num_classes * self.num_anchors, 3, 1, pi_init=False)
-            pred3r = self._bn_activation_conv(p3, self.num_anchors * 4, 3, 1)
-            pred4c = self._bn_activation_conv(p4, self.num_classes * self.num_anchors, 3, 1, pi_init=False)
-            pred4r = self._bn_activation_conv(p4, self.num_anchors * 4, 3, 1)
-            pred5c = self._bn_activation_conv(p5, self.num_classes * self.num_anchors, 3, 1, pi_init=False)
-            pred5r = self._bn_activation_conv(p5, self.num_anchors * 4, 3, 1)
-            pred6c = self._bn_activation_conv(p6, self.num_classes * self.num_anchors, 3, 1, pi_init=False)
-            pred6r = self._bn_activation_conv(p6, self.num_anchors * 4, 3, 1)
-            pred7c = self._bn_activation_conv(p7, self.num_classes * self.num_anchors, 3, 1, pi_init=False)
-            pred7r = self._bn_activation_conv(p7, self.num_anchors * 4, 3, 1)
+            pred3c = self._classification_subnet(p3, 256)
+            pred3r = self._regression_subnet(p3, 256)
+            pred4c = self._classification_subnet(p4, 256)
+            pred4r = self._regression_subnet(p4, 256)
+            pred5c = self._classification_subnet(p5, 256)
+            pred5r = self._regression_subnet(p5, 256)
+            pred6c = self._classification_subnet(p6, 256)
+            pred6r = self._regression_subnet(p6, 256)
+            pred7c = self._classification_subnet(p7, 256)
+            pred7r = self._regression_subnet(p7, 256)
             if self.data_format == 'channels_first':
                 pred3c = tf.transpose(pred3c, [0, 2, 3, 1])
                 pred3r = tf.transpose(pred3r, [0, 2, 3, 1])
@@ -247,16 +257,15 @@ class RetinaNet:
         conv1_1 = self._conv_bn_activation(
             bottom=image,
             filters=self.config['init_conv_filters'],
-            kernel_size=self.config['init_conv_kernel_size'],
-            strides=self.config['init_conv_strides'],
+            kernel_size=self.init_conv_kernel_size,
+            strides=self.init_conv_strides,
             )
         pool1 = self._max_pooling(
             bottom=conv1_1,
-            pool_size=self.config['init_pooling_pool_size'],
-            strides=self.config['init_pooling_strides'],
+            pool_size=self.init_pooling_pool_size,
+            strides=self.init_pooling_strides,
             name='pool1'
         )
-        endpoints.append(pool1)
         if self.is_bottleneck:
             stack_residual_unit_fn = self._residual_bottleneck
         else:
@@ -272,9 +281,25 @@ class RetinaNet:
             endpoints.append(residual_block)
         return endpoints[-3], endpoints[-2], endpoints[-1]
 
+    def _classification_subnet(self, bottom, filters):
+        conv1 = self._bn_activation_conv(bottom, filters, 3, 1)
+        conv2 = self._bn_activation_conv(conv1, filters, 3, 1)
+        conv3 = self._bn_activation_conv(conv2, filters, 3, 1)
+        conv4 = self._bn_activation_conv(conv3, filters, 3, 1)
+        pred = self._bn_activation_conv(conv4, self.num_classes * self.num_anchors, 3, 1, pi_init=True)
+        return pred
+
+    def _regression_subnet(self, bottom, filters):
+        conv1 = self._bn_activation_conv(bottom, filters, 3, 1)
+        conv2 = self._bn_activation_conv(conv1, filters, 3, 1)
+        conv3 = self._bn_activation_conv(conv2, filters, 3, 1)
+        conv4 = self._bn_activation_conv(conv3, filters, 3, 1)
+        pred = self._bn_activation_conv(conv4, 4 * self.num_anchors, 3, 1)
+        return pred
+
     def _get_pyramid(self, feat, feature_size, top_feat=None):
         if top_feat is None:
-            return self._bn_activation_conv(feat, feature_size, 3, 2)
+            return self._bn_activation_conv(feat, feature_size, 3, 1)
         else:
             if self.data_format == 'channels_last':
                 feat = self._bn_activation_conv(feat, feature_size, 1, 1)
@@ -299,15 +324,17 @@ class RetinaNet:
 
     def _get_abbox(self, size, pshape):
         if self.data_format == 'channels_last':
-            input_h, input_w = self.data_shape[1], self.data_shape[2]
+            input_h = self.data_shape[1]
+            downsampling_rate = tf.cast(input_h, tf.float32) / tf.cast(pshape[1], tf.float32)
         else:
-            input_h, input_w = self.data_shape[2], self.data_shape[3]
+            input_h = self.data_shape[2]
+            downsampling_rate = tf.cast(input_h, tf.float32) / tf.cast(pshape[1], tf.float32)
         topleft_y = tf.range(0., tf.cast(pshape[1], tf.float32), dtype=tf.float32)
         topleft_x = tf.range(0., tf.cast(pshape[2], tf.float32), dtype=tf.float32)
         topleft_y = tf.reshape(topleft_y, [-1, 1, 1, 1]) + 0.5
         topleft_x = tf.reshape(topleft_x, [1, -1, 1, 1]) + 0.5
-        topleft_y = tf.tile(topleft_y, [1, pshape[2], 1, 1]) * tf.cast(input_h, tf.float32) / tf.cast(pshape[1], tf.float32)
-        topleft_x = tf.tile(topleft_x, [pshape[1], 1, 1, 1]) * tf.cast(input_w, tf.float32) / tf.cast(pshape[2], tf.float32)
+        topleft_y = tf.tile(topleft_y, [1, pshape[2], 1, 1]) * downsampling_rate
+        topleft_x = tf.tile(topleft_x, [pshape[1], 1, 1, 1]) * downsampling_rate
         topleft_yx = tf.concat([topleft_y, topleft_x], -1)
         topleft_yx = tf.tile(topleft_yx, [1, 1, self.num_anchors, 1])
 
@@ -401,7 +428,6 @@ class RetinaNet:
         num_neg = neg_shape[0]
         neg_class_id = tf.constant([self.num_classes-1])
         neg_label = tf.tile(neg_class_id, [num_neg])
-        neg_loss = self._focal_loss(neg_label, neg_pconf)
 
         total_pos_pbbox_yx = tf.concat([best_pbbox_yx, pos_ppox_yx], axis=0)
         total_pos_pbbox_hw = tf.concat([best_pbbox_hw, pos_ppox_hw], axis=0)
@@ -411,76 +437,60 @@ class RetinaNet:
         total_pos_gbbox_hw = tf.concat([gbbox_hw, pos_gbbox_hw], axis=0)
         total_pos_abbox_yx = tf.concat([best_abbox_yx, pos_abbox_yx], axis=0)
         total_pos_abbox_hw = tf.concat([best_abbox_hw, pos_abbox_hw], axis=0)
+        conf_loss = self._focal_loss(total_pos_label, total_pos_pconf, neg_label, neg_pconf)
 
-        pos_conf_loss = self._focal_loss(total_pos_label, total_pos_pconf)
         pos_truth_pbbox_yx = (total_pos_gbbox_yx - total_pos_abbox_yx) / total_pos_abbox_hw
         pos_truth_pbbox_hw = tf.log(total_pos_gbbox_hw / total_pos_abbox_hw)
         pos_yx_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_yx - pos_truth_pbbox_yx), axis=-1)
         pos_hw_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_hw - pos_truth_pbbox_hw), axis=-1)
         pos_coord_loss = tf.reduce_mean(pos_yx_loss + pos_hw_loss)
 
-        total_loss = neg_loss + pos_conf_loss + pos_coord_loss
+        total_loss = conf_loss + pos_coord_loss
         return total_loss
 
     def _smooth_l1_loss(self, x):
         return tf.where(tf.abs(x) < 1., 0.5*x*x, tf.abs(x)-0.5)
 
-    def _focal_loss(self, label, prob, gamma=2., alpha=0.25):
-        prob = tf.nn.softmax(prob)
-        gather_index = tf.concat([
-            tf.expand_dims(tf.range(0, tf.shape(prob)[0], dtype=tf.int32), axis=-1),
-            tf.reshape(label, [-1, 1])
+    def _focal_loss(self, poslabel, posprob, neglabel, negprob):
+        posprob = tf.nn.softmax(posprob)
+        negprob = tf.nn.softmax(negprob)
+        pos_index = tf.concat([
+            tf.expand_dims(tf.range(0, tf.shape(posprob)[0], dtype=tf.int32), axis=-1),
+            tf.reshape(poslabel, [-1, 1])
         ], axis=-1)
-        prob = tf.gather_nd(prob, gather_index)
-        loss = - alpha * tf.pow(1. - prob, gamma) * tf.log(prob)
-        loss = tf.reduce_mean(loss)
+        neg_index = tf.concat([
+            tf.expand_dims(tf.range(0, tf.shape(negprob)[0], dtype=tf.int32), axis=-1),
+            tf.reshape(neglabel, [-1, 1])
+        ], axis=-1)
+        posprob = tf.clip_by_value(tf.gather_nd(posprob, pos_index), 1e-7, 1.)
+        negprob = tf.clip_by_value(tf.gather_nd(negprob, neg_index), 1e-7, 1.)
+        posloss = - self.alpha * tf.pow(1. - posprob, self.gamma) * tf.log(posprob)
+        negloss = - (1.-self.alpha) * tf.pow(1. - negprob, self.gamma) * tf.log(negprob)
+        total_loss = tf.concat([posloss, negloss], axis=-1)
+        loss = tf.reduce_sum(total_loss) / tf.cast(tf.shape(posloss)[1], tf.float32)
         return loss
 
-    def _train_pretraining_epoch(self, lr, writer=None, data_provider=None):
+    def _train_pretraining_epoch(self, lr):
         self.is_training = True
-        if data_provider is not None:
-            self.num_train = data_provider['num_train']
-            self.num_val = data_provider['num_val']
-            self.train_generator = data_provider['train_generator']
-            self.train_initializer, self.train_iterator = self.train_generator
-            self.data_shape = data_provider['data_shape']
-            shape = [self.batch_size].extend(data_provider['data_shape'])
-            self.images.set_shape(shape)
-        self.sess.run(self.train_initializer)
         mean_loss = []
         mean_acc = []
         for i in range(self.num_train // self.batch_size):
-            _, loss, acc, summaries = self.sess.run([self.train_op, self.loss, self.accuracy, self.summary_op],
-                                                    feed_dict={self.lr: lr})
+            _, loss, acc = self.sess.run([self.train_op, self.loss, self.accuracy], feed_dict={self.lr: lr})
             mean_loss.append(loss)
             mean_acc.append(acc)
-            if writer is not None:
-                writer.add_summary(summaries, global_step=self.global_step)
         mean_loss = np.mean(mean_loss)
         mean_acc = np.mean(mean_acc)
         return mean_loss, mean_acc
 
-    def _train_detection_epoch(self, lr, writer=None, data_provider=None):
+    def _train_detection_epoch(self, lr):
         self.is_training = True
-        if data_provider is not None:
-            self.num_train = data_provider['num_train']
-            self.num_val = data_provider['num_val']
-            self.train_generator = data_provider['train_generator']
-            self.train_initializer, self.train_iterator = self.train_generator
-            self.data_shape = data_provider['data_shape']
-            shape = [self.batch_size].extend(data_provider['data_shape'])
-            self.images.set_shape(shape)
-        self.sess.run(self.train_initializer)
         mean_loss = []
         num_iters = self.num_train // self.batch_size
         for i in range(num_iters):
-            _, loss, summaries = self.sess.run([self.train_op, self.loss, self.summary_op],
-                                               feed_dict={self.lr: lr})
+            _, loss = self.sess.run([self.train_op, self.loss], feed_dict={self.lr: lr})
             sys.stdout.write('\r>> ' + 'iters '+str(i+1)+str('/')+str(num_iters)+' loss '+str(loss))
             sys.stdout.flush()
             mean_loss.append(loss)
-            if writer is not None:
-                writer.add_summary(summaries, global_step=self.global_step)
         sys.stdout.write('\n')
         mean_loss = np.mean(mean_loss)
         return mean_loss
@@ -604,7 +614,7 @@ class RetinaNet:
                 padding='same',
                 data_format=self.data_format,
                 kernel_initializer=tf.contrib.layers.variance_scaling_initializer(),
-                bias_initializer=tf.constant_initializer(-tf.log((1 - self.pi) / self.pi))
+                bias_initializer=tf.constant_initializer(-math.log((1 - self.pi) / self.pi))
             )
         return conv
 

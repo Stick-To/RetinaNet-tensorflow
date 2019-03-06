@@ -15,41 +15,40 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 lr = 0.01
 batch_size = 1
-buffer_size = 20
+buffer_size = 2
 epochs = 280
-input_shape = [500, 500 ,3]
+input_shape = [500, 500, 3]
 reduce_lr_epoch = [120, 250]
 config = {
     'is_bottleneck': True,
     'residual_block_list': [3, 4, 6, 3],
     'init_conv_filters': 16,
-    'init_conv_kernel_size': 3,
-    'init_conv_strides': 1,
-    'init_pooling_pool_size': 3,
-    'init_pooling_strides': 2,
 
-    'mode': 'train',     # 'train', 'test'
+    'mode': 'train',                                          # 'train', 'test'
     'is_pretraining': False,
     'data_shape': input_shape,
     'num_classes': 20,
     'weight_decay': 1e-4,
-    'keep_prob': 0.5,
-    'data_format': 'channels_last',
+    'keep_prob': 0.5,                                         # not used
+    'data_format': 'channels_last',                           # 'channels_last' 'channels_first'
     'batch_size': batch_size,
 
-    'nms_score_threshold': 0.2,
+    'gamma': 2.0,                                             # gamma for focal loss
+    'alpha': 0.25,                                            # alpha for focal loss
+
+    'nms_score_threshold': 0.8,
     'nms_max_boxes': 10,
-    'nms_iou_threshold': 0.5,
+    'nms_iou_threshold': 0.45,
 }
 
 image_preprocess_config = {
-    'data_format': 'channels_last',
+    'data_format': 'channels_last',                           # 'channels_last' 'channels_first'
     'target_size': [500, 500],
-    'shorter_side': 480,
+    'shorter_side': 520,
     'is_random_crop': False,
-    'random_horizontal_flip': 0.5,
-    'random_vertical_flip': 0.,
-    'pad_truth_to': 60
+    'random_horizontal_flip': 0.5,                            # <=1.0
+    'random_vertical_flip': 0.,                               # <=1.0
+    'pad_truth_to': 60                                        # >=2 , > the maximum of number of bbox per image + 1
 }
 
 data = ['./test/test_00000-of-00005.tfrecord',
@@ -60,9 +59,9 @@ train_gen = voc_utils.get_generator(data,
 trainset_provider = {
     'data_shape': [500, 500, 3],
     'num_train': 100,
-    'num_val': 0,
+    'num_val': 0,                                             # not used
     'train_generator': train_gen,
-    'val_generator': None
+    'val_generator': None                                     # not used
 }
 retinanet = net.RetinaNet(config, trainset_provider)
 # retinanet.load_weight('./retinanet/test-64954')
@@ -73,7 +72,7 @@ for i in range(epochs):
         print('reduce lr, lr=', lr, 'now')
     mean_loss = retinanet.train_one_epoch(lr)
     print('>> mean loss', mean_loss)
-    retinanet.save_weight('latest', './retina/test')
+    retinanet.save_weight('latest', './retina/test')         # 'latest' 'best'
 
 
 # img = io.imread('000026.jpg')
