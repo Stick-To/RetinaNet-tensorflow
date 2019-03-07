@@ -429,20 +429,20 @@ class RetinaNet:
         neg_class_id = tf.constant([self.num_classes-1])
         neg_label = tf.tile(neg_class_id, [num_neg])
 
-        total_pos_pbbox_yx = tf.concat([best_pbbox_yx, pos_ppox_yx], axis=0)
-        total_pos_pbbox_hw = tf.concat([best_pbbox_hw, pos_ppox_hw], axis=0)
-        total_pos_pconf = tf.concat([best_pconf, pos_pconf], axis=0)
-        total_pos_label = tf.concat([label, pos_label], axis=0)
-        total_pos_gbbox_yx = tf.concat([gbbox_yx, pos_gbbox_yx], axis=0)
-        total_pos_gbbox_hw = tf.concat([gbbox_hw, pos_gbbox_hw], axis=0)
-        total_pos_abbox_yx = tf.concat([best_abbox_yx, pos_abbox_yx], axis=0)
-        total_pos_abbox_hw = tf.concat([best_abbox_hw, pos_abbox_hw], axis=0)
-        conf_loss = self._focal_loss(total_pos_label, total_pos_pconf, neg_label, neg_pconf)
+        pos_pbbox_yx = tf.concat([best_pbbox_yx, pos_ppox_yx], axis=0)
+        pos_pbbox_hw = tf.concat([best_pbbox_hw, pos_ppox_hw], axis=0)
+        pos_pconf = tf.concat([best_pconf, pos_pconf], axis=0)
+        pos_label = tf.concat([label, pos_label], axis=0)
+        pos_gbbox_yx = tf.concat([gbbox_yx, pos_gbbox_yx], axis=0)
+        pos_gbbox_hw = tf.concat([gbbox_hw, pos_gbbox_hw], axis=0)
+        pos_abbox_yx = tf.concat([best_abbox_yx, pos_abbox_yx], axis=0)
+        pos_abbox_hw = tf.concat([best_abbox_hw, pos_abbox_hw], axis=0)
+        conf_loss = self._focal_loss(pos_label, pos_pconf, neg_label, neg_pconf)
 
-        pos_truth_pbbox_yx = (total_pos_gbbox_yx - total_pos_abbox_yx) / total_pos_abbox_hw
-        pos_truth_pbbox_hw = tf.log(total_pos_gbbox_hw / total_pos_abbox_hw)
-        pos_yx_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_yx - pos_truth_pbbox_yx), axis=-1)
-        pos_hw_loss = tf.reduce_sum(self._smooth_l1_loss(total_pos_pbbox_hw - pos_truth_pbbox_hw), axis=-1)
+        pos_truth_pbbox_yx = (pos_gbbox_yx - pos_abbox_yx) / pos_abbox_hw
+        pos_truth_pbbox_hw = tf.log(pos_gbbox_hw / pos_abbox_hw)
+        pos_yx_loss = tf.reduce_sum(self._smooth_l1_loss(pos_pbbox_yx - pos_truth_pbbox_yx), axis=-1)
+        pos_hw_loss = tf.reduce_sum(self._smooth_l1_loss(pos_pbbox_hw - pos_truth_pbbox_hw), axis=-1)
         pos_coord_loss = tf.reduce_mean(pos_yx_loss + pos_hw_loss)
 
         total_loss = conf_loss + pos_coord_loss
@@ -462,12 +462,12 @@ class RetinaNet:
             tf.expand_dims(tf.range(0, tf.shape(negprob)[0], dtype=tf.int32), axis=-1),
             tf.reshape(neglabel, [-1, 1])
         ], axis=-1)
-        posprob = tf.clip_by_value(tf.gather_nd(posprob, pos_index), 1e-7, 1.)
-        negprob = tf.clip_by_value(tf.gather_nd(negprob, neg_index), 1e-7, 1.)
+        posprob = tf.clip_by_value(tf.gather_nd(posprob, pos_index), 1e-8, 1.)
+        negprob = tf.clip_by_value(tf.gather_nd(negprob, neg_index), 1e-8, 1.)
         posloss = - self.alpha * tf.pow(1. - posprob, self.gamma) * tf.log(posprob)
-        negloss = - (1.-self.alpha) * tf.pow(1. - negprob, self.gamma) * tf.log(negprob)
-        total_loss = tf.concat([posloss, negloss], axis=-1)
-        loss = tf.reduce_sum(total_loss) / tf.cast(tf.shape(posloss)[1], tf.float32)
+        negloss = - self.alpha * tf.pow(1. - negprob, self.gamma) * tf.log(negprob)
+        total_loss = tf.concat([posloss, negloss], axis=0)
+        loss = tf.reduce_sum(total_loss) / tf.cast(tf.shape(posloss)[0], tf.float32)
         return loss
 
     def _train_pretraining_epoch(self, lr):
