@@ -14,8 +14,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 lr = 0.01
-batch_size = 1
-buffer_size = 2
+batch_size = 32
+buffer_size = 1024
 epochs = 280
 input_shape = [500, 500, 3]
 reduce_lr_epoch = [120, 250]
@@ -41,21 +41,25 @@ config = {
     'nms_iou_threshold': 0.45,
 }
 
-image_preprocess_config = {
-    'data_format': 'channels_last',                           # 'channels_last' 'channels_first'
-    'target_size': [500, 500],
-    'shorter_side': 520,
-    'is_random_crop': False,
-    'random_horizontal_flip': 0.5,                            # <=1.0
-    'random_vertical_flip': 0.,                               # <=1.0
-    'pad_truth_to': 60                                        # >=2 , > the maximum of number of bbox per image + 1
+
+image_augmentor_config = {
+    'data_format': 'channels_last',
+    'output_shape': [500, 500],
+    'zoom_size': [520, 520],
+    'crop_method': 'random',
+    'flip_prob': [0., 0.5],
+    'fill_mode': 'BILINEAR',
+    'keep_aspect_ratios': True,
+    'constant_values': 0.,
+    'rotate_range': [-5., 5.],
+    'pad_truth_to': 10,
 }
 
 data = ['./test/test_00000-of-00005.tfrecord',
         './test/test_00001-of-00005.tfrecord']
 
 train_gen = voc_utils.get_generator(data,
-                                    batch_size, buffer_size, image_preprocess_config)
+                                    batch_size, buffer_size, image_augmentor_config)
 trainset_provider = {
     'data_shape': [500, 500, 3],
     'num_train': 100,
