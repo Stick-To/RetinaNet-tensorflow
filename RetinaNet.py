@@ -472,6 +472,7 @@ class RetinaNet:
 
     def _train_pretraining_epoch(self, lr):
         self.is_training = True
+        self.sess.run(self.train_initializer)
         mean_loss = []
         mean_acc = []
         for i in range(self.num_train // self.batch_size):
@@ -484,6 +485,7 @@ class RetinaNet:
 
     def _train_detection_epoch(self, lr):
         self.is_training = True
+        self.sess.run(self.train_initializer)
         mean_loss = []
         num_iters = self.num_train // self.batch_size
         for i in range(num_iters):
