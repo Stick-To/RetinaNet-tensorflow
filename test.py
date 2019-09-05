@@ -10,8 +10,8 @@ import os
 # import matplotlib.patches as patches
 # from skimage import io, transform
 from utils.voc_classname_encoder import classname_to_ids
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 lr = 0.01
 batch_size = 32
@@ -49,9 +49,10 @@ image_augmentor_config = {
     'crop_method': 'random',
     'flip_prob': [0., 0.5],
     'fill_mode': 'BILINEAR',
-    'keep_aspect_ratios': True,
+    'keep_aspect_ratios': False,
     'constant_values': 0.,
-    'rotate_range': [-5., 5.],
+    'color_jitter_prob': 0.5,
+    'rotate': [0.5, -5., -5.],
     'pad_truth_to': 60,
 }
 
